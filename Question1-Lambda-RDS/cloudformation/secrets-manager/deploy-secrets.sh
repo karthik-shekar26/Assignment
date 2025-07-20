@@ -1,0 +1,112 @@
+#!/bin/bash
+
+# Secrets Manager Stack Deployment Script
+# This script deploys the Secrets Manager for RDS credentials
+
+set -e
+
+# Configuration
+STACK_NAME="dev-secrets-stack"
+TEMPLATE_FILE="secrets-stack.yaml"
+REGION="ap-southeast-2"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Function to print colored output
+print_status() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Check if AWS CLI is installed
+if ! command -v aws &> /dev/null; then
+    print_error "AWS CLI is not installed. Please install it first."
+    exit 1
+fi
+
+# Check if template file exists
+if [ ! -f "$TEMPLATE_FILE" ]; then
+    print_error "Template file $TEMPLATE_FILE not found!"
+    exit 1
+fi
+
+# Validate CloudFormation template
+print_status "Validating CloudFormation template..."
+if aws cloudformation validate-template --template-body file://$TEMPLATE_FILE --region $REGION > /dev/null; then
+    print_status "Template validation successful!"
+else
+    print_error "Template validation failed!"
+    exit 1
+fi
+
+# Check if stack already exists
+if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION > /dev/null 2>&1; then
+    print_warning "Stack $STACK_NAME already exists. Updating..."
+    OPERATION="update-stack"
+else
+    print_status "Creating new stack $STACK_NAME..."
+    OPERATION="create-stack"
+fi
+
+# Prompt for database password
+print_status "Please enter the database password for Secrets Manager:"
+read -s DB_PASSWORD
+
+if [ ${#DB_PASSWORD} -lt 8 ]; then
+    print_error "Password must be at least 8 characters long!"
+    exit 1
+fi
+
+# Deploy the stack
+print_status "Deploying CloudFormation stack..."
+if aws cloudformation $OPERATION \
+    --stack-name $STACK_NAME \
+    --template-body file://$TEMPLATE_FILE \
+    --parameters \
+        ParameterKey=SecretName,ParameterValue=dev/rds/credentials \
+        ParameterKey=Environment,ParameterValue=dev \
+        ParameterKey=DBUsername,ParameterValue=admin \
+        ParameterKey=DBPassword,ParameterValue="$DB_PASSWORD" \
+    --region $REGION; then
+    
+    print_status "Stack deployment initiated successfully!"
+    
+    # Wait for stack to complete
+    print_status "Waiting for stack deployment to complete..."
+    aws cloudformation wait stack-$([ "$OPERATION" = "create-stack" ] && echo "create" || echo "update")-complete \
+        --stack-name $STACK_NAME \
+        --region $REGION
+    
+    print_status "Stack deployment completed successfully!"
+    
+    # Get stack outputs
+    print_status "Retrieving stack outputs..."
+    aws cloudformation describe-stacks \
+        --stack-name $STACK_NAME \
+        --region $REGION \
+        --query 'Stacks[0].Outputs' \
+        --output table
+    
+    # Display important information
+    print_status "Secrets Manager Resources Created:"
+    print_status "- Secret: dev/rds/credentials"
+    print_status "- Secret ARN exported for Lambda access"
+    print_warning "Note: You need to update the secret with the actual RDS endpoint after RDS deployment"
+    
+else
+    print_error "Stack deployment failed!"
+    exit 1
+fi
+
+print_status "Secrets Manager deployment completed successfully!" 

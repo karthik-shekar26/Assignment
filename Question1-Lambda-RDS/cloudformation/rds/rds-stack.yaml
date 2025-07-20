@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS MySQL Instance in VPC Private Subnets'
+
+Parameters:
+  DBInstanceIdentifier:
+    Type: String
+    Default: 'dev-rds-instance'
+    Description: 'RDS instance identifier'
+  
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues: ['dev', 'staging', 'prod']
+  
+  DBName:
+    Type: String
+    Default: 'devdb'
+    Description: 'Database name'
+  
+  DBUsername:
+    Type: String
+    Default: 'admin'
+    Description: 'Database master username'
+  
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: 'Database master password'
+    MinLength: 8
+  
+  DBInstanceClass:
+    Type: String
+    Default: 'db.t3.micro'
+    Description: 'RDS instance class'
+    AllowedValues: ['db.t3.micro', 'db.t3.small', 'db.t3.medium', 'db.r5.large']
+  
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: 'Allocated storage in GB'
+    MinValue: 20
+    MaxValue: 65536
+
+Resources:
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for RDS instance'
+      SubnetIds:
+        - Fn::ImportValue: 'dev-vpc-stack-PrivateSubnet1Id'
+        - Fn::ImportValue: 'dev-vpc-stack-PrivateSubnet2Id'
+      Tags:
+        - Key: Name
+          Value: !Sub '${DBInstanceIdentifier}-subnet-group'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Security Group for RDS
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for RDS instance'
+      VpcId:
+        Fn::ImportValue: 'dev-vpc-stack-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${DBInstanceIdentifier}-sg'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # RDS Instance
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      DBName: !Ref DBName
+      Engine: mysql
+      EngineVersion: '8.0.35'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp2
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      DeletionProtection: false
+      SkipFinalSnapshot: true
+      Tags:
+        - Key: Name
+          Value: !Ref DBInstanceIdentifier
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  DBInstanceIdentifier:
+    Description: 'RDS Instance Identifier'
+    Value: !Ref RDSInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-DBInstanceIdentifier'
+
+  DBEndpoint:
+    Description: 'RDS Instance Endpoint'
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DBEndpoint'
+
+  DBPort:
+    Description: 'RDS Instance Port'
+    Value: !GetAtt RDSInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-DBPort'
+
+  DBName:
+    Description: 'Database Name'
+    Value: !Ref DBName
+    Export:
+      Name: !Sub '${AWS::StackName}-DBName'
+
+  DBUsername:
+    Description: 'Database Username'
+    Value: !Ref DBUsername
+    Export:
+      Name: !Sub '${AWS::StackName}-DBUsername'
+
+  SecurityGroupId:
+    Description: 'RDS Security Group ID'
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroupId'
+
+  SubnetGroupName:
+    Description: 'DB Subnet Group Name'
+    Value: !Ref DBSubnetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetGroupName' 
