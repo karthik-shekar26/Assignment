@@ -99,7 +99,6 @@ Resources:
       PubliclyAccessible: false
       StorageEncrypted: true
       DeletionProtection: false
-      SkipFinalSnapshot: true
       Tags:
         - Key: Name
           Value: !Ref DBInstanceIdentifier

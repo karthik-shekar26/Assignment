@@ -1,0 +1,8 @@
+{
+  "name": "lambda-layer-mysql2",
+  "version": "1.0.0",
+  "description": "Lambda layer with mysql2 dependency",
+  "dependencies": {
+    "mysql2": "^3.6.5"
+  }
+} 
