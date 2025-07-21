@@ -1,0 +1,42 @@
+{
+  "name": "lambda-rds-infrastructure",
+  "version": "1.0.0",
+  "description": "AWS Lambda RDS Infrastructure with CloudFormation and GitHub Actions",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "cfn-lint cloudformation/**/*.yaml",
+    "validate": "for template in cloudformation/**/*.yaml; do aws cloudformation validate-template --template-body file://$template --region ap-southeast-2; done",
+    "deploy:staging": "cd cloudformation && ./deploy-staging.sh",
+    "deploy:production": "cd cloudformation && ./deploy-production.sh",
+    "test:connectivity": "./test-lambda-rds-connection.sh",
+    "test:events": "./test-with-events.sh"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "rds",
+    "cloudformation",
+    "infrastructure",
+    "ci-cd",
+    "github-actions"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "cfn-lint": "^0.72.0",
+    "aws-cdk": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/lambda-rds-infrastructure.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/lambda-rds-infrastructure/issues"
+  },
+  "homepage": "https://github.com/yourusername/lambda-rds-infrastructure#readme"
+} 

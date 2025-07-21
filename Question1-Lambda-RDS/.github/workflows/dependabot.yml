@@ -1,0 +1,89 @@
+name: Dependabot Updates
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  dependabot:
+    name: Dependabot PR
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install cfn-lint
+      run: |
+        pip install cfn-lint
+        cfn-lint --version
+        
+    - name: Lint CloudFormation templates
+      run: |
+        echo "Linting CloudFormation templates..."
+        for template in cloudformation/**/*.yaml; do
+          echo "Linting $template"
+          cfn-lint $template --region ap-southeast-2
+        done
+        
+    - name: Validate CloudFormation templates
+      run: |
+        echo "Validating CloudFormation templates..."
+        for template in cloudformation/**/*.yaml; do
+          echo "Validating $template"
+          aws cloudformation validate-template --template-body file://$template --region ap-southeast-2
+        done
+        
+    - name: Test script syntax
+      run: |
+        echo "Testing script syntax..."
+        for script in cloudformation/**/*.sh; do
+          echo "Checking syntax: $script"
+          bash -n "$script"
+        done
+        
+    - name: Comment on PR
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          const botComment = comments.find(comment => comment.user.type === 'Bot' && comment.body.includes('Dependabot validation'));
+          
+          const commentBody = `## 🤖 Dependabot Validation Results
+          
+          ✅ **CloudFormation Linting**: Passed
+          ✅ **Template Validation**: Passed  
+          ✅ **Script Syntax**: Passed
+          
+          This PR appears to be safe to merge. The automated validation checks have passed.
+          
+          **Note**: This is an automated comment from the Dependabot validation workflow.`;
+          
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: commentBody
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: commentBody
+            });
+          } 

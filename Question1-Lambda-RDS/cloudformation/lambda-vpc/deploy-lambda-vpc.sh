@@ -106,9 +106,11 @@ if aws cloudformation $OPERATION \
     print_status "- Lambda function with VPC access"
     print_status "- IAM role with Secrets Manager and VPC permissions"
     print_status "- Security group for Lambda"
-    print_status "- Function URL for HTTP access"
+    print_status "- Function URL for HTTP access (IAM authenticated)"
     print_status "- CloudWatch alarms for monitoring"
+    print_status "- CloudWatch log group for debugging"
     print_warning "Note: Lambda function is configured to access RDS via Secrets Manager"
+    print_status "Test events available in TestEvent.json for manual testing"
     
 else
     print_error "Stack deployment failed!"
