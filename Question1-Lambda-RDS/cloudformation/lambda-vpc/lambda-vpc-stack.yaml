@@ -1,0 +1,287 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda Function with VPC Access and RDS Integration via Secrets Manager'
+
+Parameters:
+  FunctionName:
+    Type: String
+    Default: 'dev-lambda-vpc-function'
+    Description: 'Name of the Lambda function'
+  
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues: ['dev', 'staging', 'prod']
+
+Resources:
+  # IAM Role for Lambda with VPC and Secrets Manager access
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${FunctionName}-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: LambdaSecretsManagerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: 
+                  - Fn::ImportValue: !Sub '${Environment}-secrets-stack-SecretArn'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # Security Group for Lambda
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for Lambda function with VPC access'
+      VpcId:
+        Fn::ImportValue: !Sub '${Environment}-vpc-stack-VpcId'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${FunctionName}-sg'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Log Group
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${FunctionName}'
+      RetentionInDays: 14
+
+  # Lambda Function with VPC Access
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLogGroup
+    Properties:
+      FunctionName: !Ref FunctionName
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const https = require('https');
+          const secretsManager = new AWS.SecretsManager();
+          
+          exports.handler = async (event) => {
+              console.log('Event:', JSON.stringify(event, null, 2));
+              
+              try {
+                  // Get database credentials from Secrets Manager
+                  const secretName = `${process.env.ENVIRONMENT}/rds/credentials`;
+                  const secretData = await secretsManager.getSecretValue({ SecretId: secretName }).promise();
+                  const credentials = JSON.parse(secretData.SecretString);
+                  
+                  console.log('Retrieved credentials from Secrets Manager');
+                  console.log('RDS Endpoint:', credentials.host);
+                  console.log('Database:', credentials.dbname);
+                  console.log('Username:', credentials.username);
+                  console.log('Port:', credentials.port);
+                  
+                  // Test RDS connectivity using a simple TCP connection test
+                  const testConnection = () => {
+                      return new Promise((resolve, reject) => {
+                          const net = require('net');
+                          const socket = new net.Socket();
+                          
+                          socket.setTimeout(10000); // 10 second timeout
+                          
+                          socket.on('connect', () => {
+                              console.log('✅ SUCCESS: TCP connection to RDS established!');
+                              socket.destroy();
+                              resolve({
+                                  status: 'connected',
+                                  message: 'TCP connection to RDS successful',
+                                  endpoint: credentials.host,
+                                  port: credentials.port
+                              });
+                          });
+                          
+                          socket.on('timeout', () => {
+                              console.log('❌ TIMEOUT: Connection to RDS timed out');
+                              socket.destroy();
+                              reject(new Error('Connection timeout'));
+                          });
+                          
+                          socket.on('error', (err) => {
+                              console.log('❌ ERROR: Failed to connect to RDS:', err.message);
+                              reject(err);
+                          });
+                          
+                          socket.connect(credentials.port, credentials.host);
+                      });
+                  };
+                  
+                  // Test the connection
+                  const connectionResult = await testConnection();
+                  
+                  const response = {
+                      statusCode: 200,
+                      headers: {
+                          'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                          message: 'Successfully tested RDS connectivity!',
+                          timestamp: new Date().toISOString(),
+                          environment: process.env.ENVIRONMENT || 'dev',
+                          connectionTest: connectionResult,
+                          credentials: {
+                              host: credentials.host,
+                              database: credentials.dbname,
+                              username: credentials.username,
+                              port: credentials.port
+                          },
+                          nextSteps: [
+                              'To enable full database operations, create a Lambda layer with mysql2',
+                              'Add the layer to this function',
+                              'Update the code to use mysql2 for INSERT/SELECT operations'
+                          ],
+                          event: event
+                      })
+                  };
+                  
+                  return response;
+                  
+              } catch (error) {
+                  console.error('Error:', error);
+                  
+                  const response = {
+                      statusCode: 500,
+                      headers: {
+                          'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                          message: 'Error testing RDS connectivity',
+                          error: error.message,
+                          timestamp: new Date().toISOString(),
+                          environment: process.env.ENVIRONMENT || 'dev',
+                          troubleshooting: [
+                              'Check if RDS instance is running',
+                              'Verify security group allows Lambda access',
+                              'Ensure Secrets Manager has correct credentials',
+                              'Check VPC and subnet configuration'
+                          ]
+                      })
+                  };
+                  
+                  return response;
+              }
+          };
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Timeout: 30
+      MemorySize: 256
+      Description: !Sub 'Lambda function with VPC access and RDS integration - ${Environment}'
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - Fn::ImportValue: !Sub '${Environment}-vpc-stack-PrivateSubnet1Id'
+          - Fn::ImportValue: !Sub '${Environment}-vpc-stack-PrivateSubnet2Id'
+
+  # Lambda Function URL with IAM authentication for security
+  LambdaFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref LambdaFunction
+      AuthType: AWS_IAM
+      Cors:
+        AllowCredentials: true
+        AllowHeaders: ['*']
+        AllowMethods: ['GET', 'POST', 'PUT', 'DELETE']
+        AllowOrigins: ['*']
+        ExposeHeaders: ['*']
+        MaxAge: 86400
+
+  # CloudWatch Alarms
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${FunctionName}-errors'
+      AlarmDescription: 'Lambda function error rate alarm'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LambdaFunction
+
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${FunctionName}-duration'
+      AlarmDescription: 'Lambda function duration alarm'
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 25000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LambdaFunction
+
+Outputs:
+  FunctionName:
+    Description: 'Name of the Lambda function'
+    Value: !Ref LambdaFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionName'
+
+  FunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt LambdaFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionArn'
+
+  FunctionUrl:
+    Description: 'URL of the Lambda function (IAM authenticated)'
+    Value: !Ref LambdaFunctionUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionUrl'
+
+  ExecutionRoleArn:
+    Description: 'ARN of the Lambda execution role'
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ExecutionRoleArn'
+
+  SecurityGroupId:
+    Description: 'Lambda Security Group ID'
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroupId'
+
+  LogGroupName:
+    Description: 'CloudWatch Log Group Name for Lambda function'
+    Value: !Ref LambdaLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LogGroupName' 

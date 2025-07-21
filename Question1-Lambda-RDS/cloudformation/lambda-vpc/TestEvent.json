@@ -1,0 +1,125 @@
+{
+  "description": "Test events for Lambda VPC function - RDS connectivity testing",
+  "events": {
+    "basic_test": {
+      "name": "Basic Connectivity Test",
+      "description": "Simple test to verify RDS connectivity",
+      "event": {
+        "test": "basic_connectivity",
+        "timestamp": "2023-12-21T10:30:00.000Z",
+        "environment": "dev"
+      }
+    },
+    "database_operations": {
+      "name": "Database Operations Test",
+      "description": "Test with custom data for database operations",
+      "event": {
+        "operation": "insert",
+        "data": {
+          "name": "Custom Test Item",
+          "description": "This is a custom test item created via API"
+        },
+        "timestamp": "2023-12-21T10:30:00.000Z",
+        "environment": "dev"
+      }
+    },
+    "error_simulation": {
+      "name": "Error Simulation Test",
+      "description": "Test error handling by providing invalid data",
+      "event": {
+        "simulate_error": true,
+        "invalid_field": "test_error_handling",
+        "timestamp": "2023-12-21T10:30:00.000Z",
+        "environment": "dev"
+      }
+    },
+    "api_gateway_proxy": {
+      "name": "API Gateway Proxy Event",
+      "description": "Simulates API Gateway proxy integration",
+      "event": {
+        "httpMethod": "POST",
+        "path": "/test",
+        "headers": {
+          "Content-Type": "application/json",
+          "User-Agent": "AWS-Lambda-Test"
+        },
+        "queryStringParameters": {
+          "test": "true",
+          "environment": "dev"
+        },
+        "body": "{\"operation\":\"test\",\"data\":{\"name\":\"API Gateway Test\"}}",
+        "isBase64Encoded": false
+      }
+    },
+    "scheduled_event": {
+      "name": "Scheduled Event Test",
+      "description": "Simulates CloudWatch Events/EventBridge scheduled trigger",
+      "event": {
+        "version": "0",
+        "id": "test-event-id",
+        "detail-type": "Scheduled Event",
+        "source": "aws.events",
+        "account": "123456789012",
+        "time": "2023-12-21T10:30:00.000Z",
+        "region": "ap-southeast-2",
+        "resources": [
+          "arn:aws:events:ap-southeast-2:123456789012:rule/test-rule"
+        ],
+        "detail": {
+          "operation": "scheduled_test",
+          "environment": "dev"
+        }
+      }
+    },
+    "secrets_test": {
+      "name": "Secrets Manager Test",
+      "description": "Test Secrets Manager credential retrieval",
+      "event": {
+        "test_type": "secrets_retrieval",
+        "secret_name": "dev/rds/credentials",
+        "timestamp": "2023-12-21T10:30:00.000Z",
+        "environment": "dev"
+      }
+    },
+    "vpc_connectivity": {
+      "name": "VPC Connectivity Test",
+      "description": "Test VPC and subnet connectivity",
+      "event": {
+        "test_type": "vpc_connectivity",
+        "target_endpoint": "RDS_ENDPOINT_PLACEHOLDER",
+        "target_port": 3306,
+        "timestamp": "2023-12-21T10:30:00.000Z",
+        "environment": "dev"
+      }
+    }
+  },
+  "usage_instructions": {
+    "console_testing": "Copy any event object above and paste it in the Lambda console test event",
+    "cli_testing": "Use the event with aws lambda invoke command",
+    "api_testing": "Use the api_gateway_proxy event for API Gateway testing"
+  },
+  "expected_responses": {
+    "success": {
+      "statusCode": 200,
+      "body": {
+        "message": "Successfully tested RDS connectivity!",
+        "connectionTest": {
+          "status": "connected",
+          "message": "TCP connection to RDS successful"
+        }
+      }
+    },
+    "error": {
+      "statusCode": 500,
+      "body": {
+        "message": "Error testing RDS connectivity",
+        "error": "Error details here",
+        "troubleshooting": [
+          "Check if RDS instance is running",
+          "Verify security group allows Lambda access",
+          "Ensure Secrets Manager has correct credentials"
+        ]
+      }
+    }
+  }
+} 

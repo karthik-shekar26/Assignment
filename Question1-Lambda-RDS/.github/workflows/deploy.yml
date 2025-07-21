@@ -1,0 +1,258 @@
+name: Deploy Lambda RDS Infrastructure
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'cloudformation/**'
+      - '.github/workflows/**'
+      - 'scripts/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'cloudformation/**'
+      - '.github/workflows/**'
+      - 'scripts/**'
+
+env:
+  AWS_REGION: ap-southeast-2
+  ENVIRONMENT: dev
+
+jobs:
+  lint-and-validate:
+    name: Lint and Validate CloudFormation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install cfn-lint
+      run: |
+        pip install cfn-lint
+        cfn-lint --version
+        
+    - name: Lint CloudFormation templates
+      run: |
+        echo "Linting CloudFormation templates..."
+        for template in cloudformation/**/*.yaml; do
+          echo "Linting $template"
+          cfn-lint $template --region ${{ env.AWS_REGION }}
+        done
+        
+    - name: Validate CloudFormation templates
+      run: |
+        echo "Validating CloudFormation templates..."
+        for template in cloudformation/**/*.yaml; do
+          echo "Validating $template"
+          aws cloudformation validate-template --template-body file://$template --region ${{ env.AWS_REGION }}
+        done
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run Checkov security scan
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: cloudformation/
+        framework: cloudformation
+        output_format: sarif
+        output_file_path: checkov-results.sarif
+        
+    - name: Upload Checkov results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: checkov-results.sarif
+
+  test-infrastructure:
+    name: Test Infrastructure Code
+    runs-on: ubuntu-latest
+    needs: [lint-and-validate, security-scan]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        npm install -g aws-cdk
+        
+    - name: Run infrastructure tests
+      run: |
+        echo "Running infrastructure tests..."
+        # Test script syntax
+        for script in cloudformation/**/*.sh; do
+          echo "Checking script syntax: $script"
+          bash -n "$script"
+        done
+        
+        # Test JSON syntax
+        for json_file in cloudformation/**/*.json; do
+          echo "Validating JSON: $json_file"
+          jq empty "$json_file"
+        done
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [lint-and-validate, security-scan, test-infrastructure]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Deploy VPC Stack
+      run: |
+        cd cloudformation/vpc
+        chmod +x deploy-simple-vpc.sh
+        ./deploy-simple-vpc.sh
+        
+    - name: Deploy RDS Stack
+      run: |
+        cd cloudformation/rds
+        chmod +x deploy-rds.sh
+        echo "${{ secrets.DB_PASSWORD }}" | ./deploy-rds.sh
+        
+    - name: Deploy Secrets Manager Stack
+      run: |
+        cd cloudformation/secrets-manager
+        chmod +x deploy-secrets.sh
+        echo "${{ secrets.DB_PASSWORD }}" | ./deploy-secrets.sh
+        
+    - name: Update Secrets with RDS Endpoint
+      run: |
+        cd cloudformation
+        chmod +x update-secret.sh
+        ./update-secret.sh
+        
+    - name: Deploy Lambda VPC Stack
+      run: |
+        cd cloudformation/lambda-vpc
+        chmod +x deploy-lambda-vpc.sh
+        ./deploy-lambda-vpc.sh
+        
+    - name: Test Lambda RDS Connection
+      run: |
+        chmod +x test-lambda-rds-connection.sh
+        ./test-lambda-rds-connection.sh
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [lint-and-validate, security-scan, test-infrastructure]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Deploy VPC Stack
+      run: |
+        cd cloudformation/vpc
+        chmod +x deploy-simple-vpc.sh
+        ./deploy-simple-vpc.sh
+        
+    - name: Deploy RDS Stack
+      run: |
+        cd cloudformation/rds
+        chmod +x deploy-rds.sh
+        echo "${{ secrets.DB_PASSWORD }}" | ./deploy-rds.sh
+        
+    - name: Deploy Secrets Manager Stack
+      run: |
+        cd cloudformation/secrets-manager
+        chmod +x deploy-secrets.sh
+        echo "${{ secrets.DB_PASSWORD }}" | ./deploy-secrets.sh
+        
+    - name: Update Secrets with RDS Endpoint
+      run: |
+        cd cloudformation
+        chmod +x update-secret.sh
+        ./update-secret.sh
+        
+    - name: Deploy Lambda VPC Stack
+      run: |
+        cd cloudformation/lambda-vpc
+        chmod +x deploy-lambda-vpc.sh
+        ./deploy-lambda-vpc.sh
+        
+    - name: Test Lambda RDS Connection
+      run: |
+        chmod +x test-lambda-rds-connection.sh
+        ./test-lambda-rds-connection.sh
+        
+    - name: Create MySQL2 Lambda Layer
+      run: |
+        chmod +x create-mysql2-layer.sh
+        ./create-mysql2-layer.sh
+
+  post-deployment-tests:
+    name: Post Deployment Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always() && (needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Run Comprehensive Tests
+      run: |
+        chmod +x test-with-events.sh
+        ./test-with-events.sh
+        
+    - name: Generate Test Report
+      run: |
+        echo "Generating deployment test report..."
+        aws cloudformation describe-stacks --stack-name dev-lambda-vpc-stack --region ${{ env.AWS_REGION }} --query 'Stacks[0].Outputs' --output table
+        
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: |
+          response.json
+          *.log 
